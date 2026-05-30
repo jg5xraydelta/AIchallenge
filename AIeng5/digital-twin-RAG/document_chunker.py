@@ -167,25 +167,85 @@ def chunk_document(
 
 # ---- example usage ----------------------------------------------------
 
-if __name__ == "__main__":
-    sample = (
-        "Large language models work best when given focused context. "
-        "When a document is too long to fit in the prompt, we split it "
-        "into overlapping chunks.\n\n"
-        "Each chunk should be small enough to embed, but large enough "
-        "to carry meaning on its own. Overlap helps preserve context "
-        "across boundaries so retrieved chunks remain coherent."
-    ) * 5
+import argparse
+import json
+import os
+from typing import Generator
 
-    chunks = chunk_document(
-        sample,
-        chunk_size=300,
-        chunk_overlap=50,
-        metadata={"source": "demo.txt"},
+
+def load_text_files(
+    root: str, extensions: Optional[List[str]] = None
+) -> Generator[Tuple[str, dict], None, None]:
+    """Recursively yield (text, metadata) for files under `root`.
+
+    Metadata contains `source`, `path`, and `filename`.
+    """
+    exts = set(extensions or [".txt"])
+    for dirpath, _, filenames in os.walk(root):
+        for fname in filenames:
+            if os.path.splitext(fname)[1].lower() not in exts:
+                continue
+            path = os.path.join(dirpath, fname)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    text = f.read()
+            except Exception:
+                # best-effort: skip unreadable files
+                continue
+            meta = {
+                "source": os.path.relpath(path, start=root),
+                "path": path,
+                "filename": fname,
+            }
+            yield text, meta
+
+
+def chunk_text_files(
+    root: str,
+    chunk_size: int = 800,
+    chunk_overlap: int = 100,
+    extensions: Optional[List[str]] = None,
+) -> List[Chunk]:
+    """Load all text files under `root` and return a flat list of chunks."""
+    docs = list(load_text_files(root, extensions=extensions))
+    if not docs:
+        return []
+    chunker = DocumentChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    return chunker.split_many(docs)
+
+
+def save_chunks_jsonl(chunks: List[Chunk], outpath: str) -> None:
+    """Serialize chunks to a JSONL file with useful metadata."""
+    with open(outpath, "w", encoding="utf-8") as fh:
+        for c in chunks:
+            obj = {
+                "text": c.text,
+                "index": c.index,
+                "start_char": c.start_char,
+                "end_char": c.end_char,
+                "token_estimate": c.token_estimate,
+                "metadata": c.metadata,
+            }
+            fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+
+def _cli():
+    p = argparse.ArgumentParser(description="Chunk all text files under a folder")
+    p.add_argument("root", help="Root folder to search for text files")
+    p.add_argument("--out", help="Output JSONL file", default="chunks.jsonl")
+    p.add_argument("--size", type=int, default=800, help="Chunk size")
+    p.add_argument("--overlap", type=int, default=100, help="Chunk overlap")
+    p.add_argument(
+        "--ext", help="Comma-separated extensions (default: .txt)", default=".txt"
     )
+    args = p.parse_args()
+    exts = [e if e.startswith(".") else f".{e}" for e in args.ext.split(",")]
+    chunks = chunk_text_files(
+        args.root, chunk_size=args.size, chunk_overlap=args.overlap, extensions=exts
+    )
+    save_chunks_jsonl(chunks, args.out)
+    print(f"Wrote {len(chunks)} chunks to {args.out}")
 
-    for c in chunks:
-        preview = c.text[:80].replace("\n", " ")
-        print(f"[{c.index}] {c.start_char}-{c.end_char}  (~{c.token_estimate} tok)")
-        print(preview + ("..." if len(c.text) > 80 else ""))
-        print("-" * 60)
+
+if __name__ == "__main__":
+    _cli()
