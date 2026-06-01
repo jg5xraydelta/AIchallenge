@@ -177,7 +177,7 @@ def respond_ai(message, history):
 gr.ChatInterface(
     fn=respond_ai,
     title="Jared's Digital Twin",
-    chatbot=gr.Chatbot(avatar_images=None, "jared.jpeg"),
+    chatbot=gr.Chatbot(avatar_images=(None, "jared.jpeg")),
     description="Chat with an AI version of Jared Gavin.  Ask about his experience, projects, or just say hi!",
     examples=["What's your background?", "AI Engineering experience", "Do you like dogs?"]
     ).launch()
